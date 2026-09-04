@@ -1,3 +1,14 @@
+> **Retired — folded into [`zed-pkg/zed-lib-core`](https://github.com/zed-pkg/zed-lib-core) (2026-09-04).**
+> The crate lives on as the `src/rust-lock` slice there, same name, same
+> public API, published under the `lock/v{version}` tag namespace. Depend on
+> `zed-lock = { git = "https://github.com/zed-pkg/zed-lib-core.git", tag = "lock/v0.1.1" }`
+> (or the zed package `zed-pkg/zed-lock`, now a nested target of
+> `zed-pkg/zed-lib-core`). This repository is archived; its tags remain valid
+> for the versions they named, and its full history is a parent of the
+> fold merge commit in zed-lib-core (`MERGE_PROVENANCE.md`, "Third lineage").
+> Distributed lease + Postgres advisory composition is not here and never
+> was: see [`ORESoftware/ores-locks-and-leases`](https://github.com/ORESoftware/ores-locks-and-leases).
+
 # zed-lock
 
 `zed-lock` is the local locking core for recursive zed-pkg mutations and shared
