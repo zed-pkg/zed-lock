@@ -215,7 +215,7 @@ fn sddl_rights_can_modify(rights: &str) -> bool {
             .map(|mask| mask & MODIFY_MASK != 0)
             .unwrap_or(true);
     }
-    if upper.len() % 2 != 0 || !upper.is_ascii() {
+    if !upper.len().is_multiple_of(2) || !upper.is_ascii() {
         return true;
     }
     upper.as_bytes().chunks_exact(2).any(|token| {

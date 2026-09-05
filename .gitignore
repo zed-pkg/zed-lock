@@ -6,7 +6,7 @@ __pycache__/
 *.py[cod]
 **/*.rs.bk
 .DS_Store
-tmp
-temp
-tmp/worktrees
-temp/worktrees
+tmp/
+temp/
+tmp/worktrees/
+temp/worktrees/

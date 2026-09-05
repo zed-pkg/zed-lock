@@ -6,30 +6,61 @@ on:
     branches: [main]
   workflow_dispatch:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
 jobs:
   waiter-lifecycle:
-    name: waiter lifecycle
+    name: fmctl + Quint waiter lifecycle
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 20
+    env:
+      NO_COLOR: '1'
+      RUST_BACKTRACE: '1'
     steps:
       - name: Check out exact revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
 
+      # fmctl is incubating in opto-sync while the standalone formal-methods
+      # runner is extracted. Pin its source so manifest semantics cannot drift
+      # between pull requests.
+      - name: Check out the pinned fmctl incubator
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: opto-sync/opto-sync-clients
+          ref: c2146ef9f054d24e1488c216547852aa148285cf
+          path: .formal-tools/opto-sync-clients
+          persist-credentials: false
+
+      - name: Install the fmctl Rust toolchain
+        uses: dtolnay/rust-toolchain@2eae45db285e407f22119950686d47e1101e071b
+
       - name: Install Node.js 22
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        uses: actions/setup-node@249970729cb0ef3589644e289664e5dc5ba9c38 # v6
         with:
           node-version: 22
 
       - name: Install Java 17 for TLC
-        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
         with:
           distribution: temurin
-          java-version: "17"
+          java-version: "21"
+
+      - name: Build the pinned fmctl runner
+        run: |
+          mkdir -p "$RUNNER_TEMP/fmctl-source"
+          cp -R .formal-tools/opto-sync-clients/tools/fmctl/. "$RUNNER_TEMP/fmctl-source/"
+          cargo build \
+            --locked \
+            --release \
+            --manifest-path "$RUNNER_TEMP/fmctl-source/Cargo.toml"
+          echo "FMCTL=$RUNNER_TEMP/fmctl-source/target/release/fmctl" >> "$GITHUB_ENV"
 
       - name: Validate the concrete refinement corpus
         run: >-
@@ -37,32 +68,40 @@ jobs:
           -s protocol/formal-waiter-lifecycle.schema.json
           -d protocol/formal-waiter-lifecycle.json
 
-      # Keep these argv aligned with `fmctl --dry-run`. The repository-local
-      # schema-v1 manifest is the source of the claim and resource bounds.
-      - name: Typecheck the Quint specification
-        run: >-
-          npx --yes --package=@informalsystems/quint@0.32.0 quint typecheck
-          formal/waiter_lifecycle.qnt
+      - name: Validate the repository formal-methods manifest
+        run: |
+          mkdir -p .formal-artifacts/fmctl
+          "$FMCTL" --format json validate \
+            | tee .formal-artifacts/fmctl/validate.json
 
-      - name: Simulate invariants and required witnesses
-        run: >-
-          npx --yes --package=@informalsystems/quint@0.32.0 quint run
-          formal/waiter_lifecycle.qnt
-          --main=waiter_lifecycle
-          --init=init
-          --step=step
-          --backend=typescript
-          --max-samples=10000
-          --max-steps=30
-          --invariants waiter_lifecycle_safety
-          --witnesses cancel_before_grant_reached timeout_before_grant_reached detached_grant_release_reached successful_transfer_reached waiter_cap_rejection_reached same_process_rejection_reached partial_lockset_unwind_reached
+      - name: Record and validate the formal toolchain
+        run: |
+          "$FMCTL" --format json doctor \
+            | tee .formal-artifacts/fmctl/doctor.json
 
-      - name: Exhaustively verify the declared finite state space with TLC
-        run: >-
-          npx --yes --package=@informalsystems/quint@0.32.0 quint verify
-          formal/waiter_lifecycle.qnt
-          --main=waiter_lifecycle
-          --init=init
-          --step=step
-          --backend=tlc
-          --invariants waiter_lifecycle_safety
+      - name: Type-check the declared waiter lifecycle model
+        run: |
+          "$FMCTL" check
+
+      - name: Reach every configured waiter lifecycle witness
+        run: |
+          "$FMCTL" simulate
+
+      - name: Exhaust the declared finite waiter lifecycle state graph
+        run: |
+          "$FMCTL" verify
+
+      - name: Upload model-checker evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: zed-lock-formal-methods
+          path: |
+            .formal-artifacts/
+            formal/fm.toml
+            formal/waiter_lifecycle.qnt
+            protocol/formal-waiter-lifecycle.schema.json
+            protocol/formal-waiter-lifecycle.json
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 14

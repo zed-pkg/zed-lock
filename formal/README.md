@@ -11,6 +11,11 @@ at most two active native workers, one canonical descriptor-lock identity, and
 a two-lock ordered transaction. The operating system's grant is deliberately
 nondeterministic.
 
+The GitHub Actions workflow builds `fmctl` from the reviewed
+`opto-sync/opto-sync-clients` revision `c2146ef9f054d24e1488c216547852aa148285cf`.
+It validates this manifest before running the configured checks, simulation, and
+TLC proof, and uploads the resulting JSON evidence as a workflow artifact.
+
 ## Safety properties
 
 The composed `waiter_lifecycle_safety` invariant checks that:
