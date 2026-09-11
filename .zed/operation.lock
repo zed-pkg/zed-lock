@@ -1,0 +1,7 @@
+# zed-lock diagnostics only; descriptor ownership is authoritative
+pid=3685
+hostname=
+executable=zed
+thread=main
+operation=restore frozen Zed dependency graph
+acquired_unix_ms=1787428538802
