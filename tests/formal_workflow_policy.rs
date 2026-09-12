@@ -55,6 +55,42 @@ fn fmctl_workflow_is_exact_head_pinned_and_manifest_owned() {
 }
 
 #[test]
+fn package_ci_requires_the_same_pinned_formal_proof() {
+    let workflow = read(".github/workflows/ci.yml");
+    for required in [
+        "formal-model:",
+        "pinned fmctl finite-model certification",
+        "c2146ef9f054d24e1488c216547852aa148285cf",
+        "formal/fm.toml",
+        ".formal-tools/opto-sync-clients/tools/fmctl/rust-toolchain.toml",
+        "test \"$manifest_rust\" = \"$fmctl_rust\"",
+        "cargo build --locked --release",
+        "\"$FMCTL\" check",
+        "\"$FMCTL\" simulate",
+        "\"$FMCTL\" verify",
+        "needs: [test, formal-model]",
+    ] {
+        assert!(
+            workflow.contains(required),
+            "required package CI lost formal proof control `{required}`"
+        );
+    }
+
+    for forbidden in [
+        "toolchain: stable",
+        "rustup default stable",
+        "rustup toolchain install stable",
+        "persist-credentials: true",
+        "contents: write",
+    ] {
+        assert!(
+            !workflow.contains(forbidden),
+            "required package CI contains forbidden drift `{forbidden}`"
+        );
+    }
+}
+
+#[test]
 fn formal_manifest_rust_authority_is_patch_exact() {
     let manifest = read("formal/fm.toml");
     let rust = manifest
