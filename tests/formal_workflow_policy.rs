@@ -96,13 +96,22 @@ fn formal_manifest_rust_authority_is_patch_exact() {
     let rust = manifest
         .lines()
         .map(str::trim)
-        .find_map(|line| line.strip_prefix("rust = \"").and_then(|value| value.strip_suffix('"')))
+        .find_map(|line| {
+            line.strip_prefix("rust = \"")
+                .and_then(|value| value.strip_suffix('"'))
+        })
         .expect("formal/fm.toml must declare toolchain.rust");
 
     let parts = rust.split('.').collect::<Vec<_>>();
-    assert_eq!(parts.len(), 3, "formal Rust authority must be x.y.z exact: {rust}");
+    assert_eq!(
+        parts.len(),
+        3,
+        "formal Rust authority must be x.y.z exact: {rust}"
+    );
     assert!(
-        parts.iter().all(|part| !part.is_empty() && part.chars().all(|ch| ch.is_ascii_digit())),
+        parts
+            .iter()
+            .all(|part| !part.is_empty() && part.chars().all(|ch| ch.is_ascii_digit())),
         "formal Rust authority must be numeric x.y.z: {rust}"
     );
 }
