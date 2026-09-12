@@ -11,6 +11,14 @@ at most two active native workers, one canonical descriptor-lock identity, and
 a two-lock ordered transaction. The operating system's grant is deliberately
 nondeterministic.
 
+GitHub Actions builds `fmctl` from reviewed `opto-sync/opto-sync-clients`
+revision `c2146ef9f054d24e1488c216547852aa148285cf`. The workflow cross-checks the
+repository manifest's exact Rust version against that pinned fmctl checkout's
+`rust-toolchain.toml`, installs only the matching patch release, verifies the
+active compiler, validates the manifest, records `fmctl doctor` evidence, and
+then runs the configured check/simulation/verification pipeline. The resulting
+JSON and model inputs are retained as workflow artifacts.
+
 ## Safety properties
 
 The composed `waiter_lifecycle_safety` invariant checks that:
