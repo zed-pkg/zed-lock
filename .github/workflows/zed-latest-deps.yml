@@ -1,0 +1,25 @@
+name: Zed latest dependency gate
+on: [pull_request, workflow_dispatch]
+permissions: {contents: read}
+concurrency:
+  group: zed-latest-deps-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  zed-latest-deps:
+    name: zed-latest-deps
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env: {ZED_PKG_INTERACTIVE: "false", GITHUB_TOKEN: "${{ github.token }}"}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {fetch-depth: 0, persist-credentials: false}
+      - name: Install pinned Zed CLI v0.3.0
+        shell: bash
+        run: |
+          set -euo pipefail
+          a="$RUNNER_TEMP/zed.tar.gz"; d="$RUNNER_TEMP/zed-release"
+          curl --fail --location --retry 3 --retry-all-errors -o "$a" https://github.com/zed-pkg/zed-cli/releases/download/v0.3.0/zed-x86_64-unknown-linux-gnu.tar.gz
+          printf '%s  %s\n' f87576bc289e43ed647902527e7be70566445d2f1fd11249f067ab35547d4b8a "$a" | sha256sum --check --strict
+          mkdir -p "$d" "$HOME/.local/bin"; tar -xzf "$a" -C "$d"; z="$(find "$d" -type f -name zed -perm -111 -print -quit)"; test -n "$z"; install -m 0755 "$z" "$HOME/.local/bin/zed"; echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - run: zed --version
+      - run: bash .githooks/pre-push --ci
