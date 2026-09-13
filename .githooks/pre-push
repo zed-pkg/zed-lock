@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+set -euo pipefail
+r="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"; cd "$r"
+if [[ "${1:-}" == --install ]]; then chmod +x .githooks/pre-push; git config core.hooksPath .githooks; echo 'installed Zed pre-push hook'; exit 0; fi
+[[ -f .zpkg.toml ]] || exit 0
+command -v zed >/dev/null || { echo 'zed CLI is required' >&2; exit 1; }
+[[ -f .zpkg.lock ]] || { echo '.zpkg.lock is required; run zed install and commit it' >&2; exit 1; }
+zed validate --require-lock
+zed install
+if ! git diff --quiet -- .zpkg.lock; then echo 'Zed dependency lock is stale relative to newest versions allowed by .zpkg.toml.' >&2; git --no-pager diff -- .zpkg.lock >&2 || true; exit 1; fi
+zed install --frozen
+zed build
+if [[ -f Cargo.toml ]]; then if [[ -f Cargo.lock ]]; then zed develop --no-install -c 'cargo check --locked --all-targets'; else zed develop --no-install -c 'cargo check --all-targets'; fi; fi
+if [[ -f go.mod ]]; then zed develop --no-install -c 'go test ./...'; fi
+if [[ -f package.json ]]; then
+  if [[ -f pnpm-lock.yaml ]]; then pm='corepack pnpm'; ins='corepack pnpm install --frozen-lockfile'; elif [[ -f package-lock.json ]]; then pm='npm'; ins='npm ci'; elif [[ -f yarn.lock ]]; then pm='corepack yarn'; ins='corepack yarn install --immutable'; else pm='npm'; ins='npm install --ignore-scripts'; fi
+  if node -e 'const p=require("./package.json");process.exit(p.scripts?.typecheck?0:1)'; then s=typecheck; elif node -e 'const p=require("./package.json");process.exit(p.scripts?.build?0:1)'; then s=build; else echo 'Node package has no typecheck/build script' >&2; exit 1; fi
+  zed develop --no-install -c "$ins && $pm run $s"
+fi
+if [[ -f pyproject.toml || -f setup.py ]]; then zed develop --no-install -c 'python3 -m compileall -q .'; fi
+if [[ -f pom.xml ]]; then zed develop --no-install -c 'mvn -B -DskipTests compile'; fi
+if [[ -f gradlew ]]; then zed develop --no-install -c './gradlew --no-daemon classes'; fi
+p="${TMPDIR:-/tmp}/zed-latest-deps-pack-$$"; trap 'rm -rf "$p"' EXIT; mkdir -p "$p"; zed pack --out "$p"
