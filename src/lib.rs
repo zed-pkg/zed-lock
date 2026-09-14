@@ -998,6 +998,7 @@ fn open_lock_file(path: &Path) -> Result<(File, PathBuf)> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
             .with_context(|| format!("creating lock directory {}", parent.display()))?;
+        harden_lock_root_permissions(parent)?;
     }
     let file = OpenOptions::new()
         .create(true)
@@ -1009,6 +1010,37 @@ fn open_lock_file(path: &Path) -> Result<(File, PathBuf)> {
     let identity = fs::canonicalize(path)
         .with_context(|| format!("canonicalizing lock identity {}", path.display()))?;
     Ok((file, identity))
+}
+
+#[cfg(unix)]
+fn harden_lock_root_permissions(parent: &Path) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let metadata = fs::symlink_metadata(parent)
+        .with_context(|| format!("inspecting lock directory {}", parent.display()))?;
+    if !metadata.file_type().is_dir() || metadata.file_type().is_symlink() {
+        bail!(
+            "lock directory {} is not a real directory",
+            parent.display()
+        );
+    }
+    let current = metadata.permissions().mode() & 0o777;
+    if current & 0o077 != 0 {
+        let mut permissions = metadata.permissions();
+        permissions.set_mode(0o700);
+        fs::set_permissions(parent, permissions).with_context(|| {
+            format!(
+                "restricting lock directory {} to mode 0700",
+                parent.display()
+            )
+        })?;
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn harden_lock_root_permissions(_parent: &Path) -> Result<()> {
+    Ok(())
 }
 
 fn canonical_lock_path(path: &Path) -> Result<PathBuf> {
