@@ -1,4 +1,5 @@
 # Executable evidence for zed-lock issue #31; ownership remains native OS authority.
+# Exact-head push lane intentionally avoids PR approval gates after generated repairs.
 name: DEN-2037 sixth-order API-state conformance
 
 on:
