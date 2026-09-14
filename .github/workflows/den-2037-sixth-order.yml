@@ -1,3 +1,4 @@
+# Executable evidence for zed-lock issue #31; ownership remains native OS authority.
 name: DEN-2037 sixth-order API-state conformance
 
 on:
