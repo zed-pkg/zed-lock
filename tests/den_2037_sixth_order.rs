@@ -6,7 +6,10 @@ use std::time::{Duration, Instant};
 use anyhow::{Result, anyhow};
 use zed_lock::{LockClass, LockEvent, LockEventKind, LockManager, LockRequest, LockWaiter};
 
-fn event_log() -> (Arc<Mutex<Vec<LockEvent>>>, impl Fn(&LockEvent) + Send + Sync + 'static) {
+fn event_log() -> (
+    Arc<Mutex<Vec<LockEvent>>>,
+    impl Fn(&LockEvent) + Send + Sync + 'static,
+) {
     let events = Arc::new(Mutex::new(Vec::new()));
     let sink_events = Arc::clone(&events);
     let sink = move |event: &LockEvent| {
@@ -155,8 +158,12 @@ fn task07_zero_duration_retries_keep_one_worker() -> Result<()> {
     let (release_tx, release_rx) = mpsc::sync_channel(0);
     let mut waiter = LockWaiter::spawn("task07-zero", move || {
         worker_attempts.fetch_add(1, Ordering::SeqCst);
-        started_tx.send(()).map_err(|_| anyhow!("start receiver closed"))?;
-        release_rx.recv().map_err(|_| anyhow!("release sender closed"))?;
+        started_tx
+            .send(())
+            .map_err(|_| anyhow!("start receiver closed"))?;
+        release_rx
+            .recv()
+            .map_err(|_| anyhow!("release sender closed"))?;
         Ok(7_u8)
     })?;
     started_rx.recv_timeout(Duration::from_secs(1))?;
@@ -198,7 +205,11 @@ fn task08_zero_acquire_timeout_has_one_terminal_reason_and_no_leak() -> Result<(
             .count(),
         1
     );
-    assert!(!observed.iter().any(|event| event.kind == LockEventKind::Cancelled));
+    assert!(
+        !observed
+            .iter()
+            .any(|event| event.kind == LockEventKind::Cancelled)
+    );
     drop(owner);
     wait_for_no_waiters(&manager);
     let guard = manager
@@ -266,15 +277,13 @@ fn task11_same_process_rejection_does_not_poison_reservation() -> Result<()> {
     let temp = tempfile::tempdir()?;
     let path = temp.path().join("eleven.lock");
     let manager = LockManager::default();
-    let owner = manager.acquire_blocking(
-        LockRequest::exclusive(&path).operation("task11-owner"),
-    )?;
-    let error = match manager.try_acquire(
-        LockRequest::exclusive(&path).operation("task11-rejected"),
-    ) {
-        Ok(_) => panic!("same-process reentry must reject"),
-        Err(error) => error,
-    };
+    let owner =
+        manager.acquire_blocking(LockRequest::exclusive(&path).operation("task11-owner"))?;
+    let error =
+        match manager.try_acquire(LockRequest::exclusive(&path).operation("task11-rejected")) {
+            Ok(_) => panic!("same-process reentry must reject"),
+            Err(error) => error,
+        };
     assert!(format!("{error:#}").contains("same process already owns"));
     drop(owner);
     let guard = manager
@@ -360,8 +369,12 @@ fn task14_partial_lockset_failure_unwinds_prior_guard() -> Result<()> {
                 .operation("task14-owner")
                 .class(LockClass::Build),
         )?;
-        ready_tx.send(()).map_err(|_| anyhow!("ready receiver closed"))?;
-        release_rx.recv().map_err(|_| anyhow!("release sender closed"))?;
+        ready_tx
+            .send(())
+            .map_err(|_| anyhow!("ready receiver closed"))?;
+        release_rx
+            .recv()
+            .map_err(|_| anyhow!("release sender closed"))?;
         drop(guard);
         Ok(())
     });
@@ -388,7 +401,9 @@ fn task14_partial_lockset_failure_unwinds_prior_guard() -> Result<()> {
         .expect("first guard must have been unwound after later failure");
     drop(first_guard);
     release_tx.send(())?;
-    owner.join().map_err(|_| anyhow!("owner thread panicked"))??;
+    owner
+        .join()
+        .map_err(|_| anyhow!("owner thread panicked"))??;
     Ok(())
 }
 
