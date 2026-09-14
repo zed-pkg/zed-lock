@@ -188,14 +188,15 @@ fn task08_zero_acquire_timeout_has_one_terminal_reason_and_no_leak() -> Result<(
             .operation("task08-owner")
             .queue_same_process(),
     )?;
-    let error = manager
-        .acquire_timeout(
-            LockRequest::exclusive(&path)
-                .operation("task08-timeout")
-                .queue_same_process(),
-            Duration::ZERO,
-        )
-        .expect_err("zero deadline must time out while contended");
+    let error = match manager.acquire_timeout(
+        LockRequest::exclusive(&path)
+            .operation("task08-timeout")
+            .queue_same_process(),
+        Duration::ZERO,
+    ) {
+        Ok(_) => panic!("zero deadline must time out while contended"),
+        Err(error) => error,
+    };
     assert!(format!("{error:#}").contains("timed out"));
     let observed = events_for(&events, "task08-timeout");
     assert_eq!(
