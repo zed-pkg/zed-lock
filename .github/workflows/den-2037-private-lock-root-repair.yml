@@ -1,0 +1,58 @@
+name: DEN-2037 private lock root repair
+
+on:
+  push:
+    branches: [den-2037-private-lock-root]
+    paths: ['.github/workflows/den-2037-private-lock-root-repair.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  repair-and-test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: den-2037-private-lock-root
+          fetch-depth: 0
+          persist-credentials: true
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
+        with:
+          toolchain: '1.88.0'
+          components: 'rustfmt,clippy'
+      - name: Enforce private Unix lock roots and add regression
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('src/lib.rs')
+          text = p.read_text()
+          old = '''fn open_lock_file(path: &Path) -> Result<(File, PathBuf)> {\n    if let Some(parent) = path.parent() {\n        fs::create_dir_all(parent)\n            .with_context(|| format!("creating lock directory {}", parent.display()))?;\n    }\n'''
+          new = '''fn open_lock_file(path: &Path) -> Result<(File, PathBuf)> {\n    if let Some(parent) = path.parent() {\n        fs::create_dir_all(parent)\n            .with_context(|| format!("creating lock directory {}", parent.display()))?;\n        harden_lock_root_permissions(parent)?;\n    }\n'''
+          if old not in text:
+              raise SystemExit('open_lock_file anchor not found')
+          text = text.replace(old, new, 1)
+          insert = '''\n#[cfg(unix)]\nfn harden_lock_root_permissions(parent: &Path) -> Result<()> {\n    use std::os::unix::fs::PermissionsExt;\n\n    let metadata = fs::symlink_metadata(parent)\n        .with_context(|| format!("inspecting lock directory {}", parent.display()))?;\n    if !metadata.file_type().is_dir() || metadata.file_type().is_symlink() {\n        bail!("lock directory {} is not a real directory", parent.display());\n    }\n    let current = metadata.permissions().mode() & 0o777;\n    if current & 0o077 != 0 {\n        let mut permissions = metadata.permissions();\n        permissions.set_mode(0o700);\n        fs::set_permissions(parent, permissions)\n            .with_context(|| format!("restricting lock directory {} to mode 0700", parent.display()))?;\n    }\n    Ok(())\n}\n\n#[cfg(not(unix))]\nfn harden_lock_root_permissions(_parent: &Path) -> Result<()> {\n    Ok(())\n}\n\n'''
+          marker = 'fn canonical_lock_path(path: &Path) -> Result<PathBuf> {'
+          if marker not in text:
+              raise SystemExit('canonical_lock_path anchor not found')
+          text = text.replace(marker, insert + marker, 1)
+          p.write_text(text)
+
+          tests = Path('tests/private_lock_root.rs')
+          tests.write_text(r'''use std::fs;\n\nuse zed_lock::{LockManager, LockRequest};\n\n#[cfg(unix)]\n#[test]\nfn lock_root_is_private_even_under_permissive_umask() {\n    use std::os::unix::fs::PermissionsExt;\n\n    let temp = tempfile::tempdir().expect("temp root");\n    let root = temp.path().join("locks");\n    fs::create_dir_all(&root).expect("seed root");\n    let mut permissions = fs::metadata(&root).expect("root metadata").permissions();\n    permissions.set_mode(0o755);\n    fs::set_permissions(&root, permissions).expect("widen seeded root");\n\n    let path = root.join("install.lock");\n    let guard = LockManager::global()\n        .acquire_blocking(LockRequest::exclusive(&path).operation("privacy regression"))\n        .expect("acquire lock");\n    let mode = fs::metadata(&root).expect("root metadata after acquire").permissions().mode() & 0o777;\n    assert_eq!(mode & 0o077, 0, "lock root remained group/other accessible: {mode:o}");\n    drop(guard);\n}\n''')
+          PY
+          cargo fmt --all
+          cargo test --locked --test private_lock_root -- --nocapture
+          cargo clippy --locked --all-targets -- -D warnings
+      - name: Commit hardened implementation
+        run: |
+          set -euo pipefail
+          git add src/lib.rs tests/private_lock_root.rs
+          git diff --cached --check
+          git config user.name 'ORESoftware'
+          git config user.email 'alex@oresoftware.com'
+          git commit -m 'fix(DEN-2037): keep local lock roots private on Unix'
+          git push origin HEAD:den-2037-private-lock-root
