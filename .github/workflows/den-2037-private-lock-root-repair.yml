@@ -29,12 +29,48 @@ jobs:
           from pathlib import Path
           p = Path('src/lib.rs')
           text = p.read_text()
-          old = '''fn open_lock_file(path: &Path) -> Result<(File, PathBuf)> {\n    if let Some(parent) = path.parent() {\n        fs::create_dir_all(parent)\n            .with_context(|| format!("creating lock directory {}", parent.display()))?;\n    }\n'''
-          new = '''fn open_lock_file(path: &Path) -> Result<(File, PathBuf)> {\n    if let Some(parent) = path.parent() {\n        fs::create_dir_all(parent)\n            .with_context(|| format!("creating lock directory {}", parent.display()))?;\n        harden_lock_root_permissions(parent)?;\n    }\n'''
+          old = '''fn open_lock_file(path: &Path) -> Result<(File, PathBuf)> {
+              if let Some(parent) = path.parent() {
+                  fs::create_dir_all(parent)
+                      .with_context(|| format!("creating lock directory {}", parent.display()))?;
+              }
+          '''
+          new = '''fn open_lock_file(path: &Path) -> Result<(File, PathBuf)> {
+              if let Some(parent) = path.parent() {
+                  fs::create_dir_all(parent)
+                      .with_context(|| format!("creating lock directory {}", parent.display()))?;
+                  harden_lock_root_permissions(parent)?;
+              }
+          '''
           if old not in text:
               raise SystemExit('open_lock_file anchor not found')
           text = text.replace(old, new, 1)
-          insert = '''\n#[cfg(unix)]\nfn harden_lock_root_permissions(parent: &Path) -> Result<()> {\n    use std::os::unix::fs::PermissionsExt;\n\n    let metadata = fs::symlink_metadata(parent)\n        .with_context(|| format!("inspecting lock directory {}", parent.display()))?;\n    if !metadata.file_type().is_dir() || metadata.file_type().is_symlink() {\n        bail!("lock directory {} is not a real directory", parent.display());\n    }\n    let current = metadata.permissions().mode() & 0o777;\n    if current & 0o077 != 0 {\n        let mut permissions = metadata.permissions();\n        permissions.set_mode(0o700);\n        fs::set_permissions(parent, permissions)\n            .with_context(|| format!("restricting lock directory {} to mode 0700", parent.display()))?;\n    }\n    Ok(())\n}\n\n#[cfg(not(unix))]\nfn harden_lock_root_permissions(_parent: &Path) -> Result<()> {\n    Ok(())\n}\n\n'''
+          insert = '''
+          #[cfg(unix)]
+          fn harden_lock_root_permissions(parent: &Path) -> Result<()> {
+              use std::os::unix::fs::PermissionsExt;
+
+              let metadata = fs::symlink_metadata(parent)
+                  .with_context(|| format!("inspecting lock directory {}", parent.display()))?;
+              if !metadata.file_type().is_dir() || metadata.file_type().is_symlink() {
+                  bail!("lock directory {} is not a real directory", parent.display());
+              }
+              let current = metadata.permissions().mode() & 0o777;
+              if current & 0o077 != 0 {
+                  let mut permissions = metadata.permissions();
+                  permissions.set_mode(0o700);
+                  fs::set_permissions(parent, permissions)
+                      .with_context(|| format!("restricting lock directory {} to mode 0700", parent.display()))?;
+              }
+              Ok(())
+          }
+
+          #[cfg(not(unix))]
+          fn harden_lock_root_permissions(_parent: &Path) -> Result<()> {
+              Ok(())
+          }
+
+          '''
           marker = 'fn canonical_lock_path(path: &Path) -> Result<PathBuf> {'
           if marker not in text:
               raise SystemExit('canonical_lock_path anchor not found')
@@ -42,7 +78,39 @@ jobs:
           p.write_text(text)
 
           tests = Path('tests/private_lock_root.rs')
-          tests.write_text(r'''use std::fs;\n\nuse zed_lock::{LockManager, LockRequest};\n\n#[cfg(unix)]\n#[test]\nfn lock_root_is_private_even_under_permissive_umask() {\n    use std::os::unix::fs::PermissionsExt;\n\n    let temp = tempfile::tempdir().expect("temp root");\n    let root = temp.path().join("locks");\n    fs::create_dir_all(&root).expect("seed root");\n    let mut permissions = fs::metadata(&root).expect("root metadata").permissions();\n    permissions.set_mode(0o755);\n    fs::set_permissions(&root, permissions).expect("widen seeded root");\n\n    let path = root.join("install.lock");\n    let guard = LockManager::global()\n        .acquire_blocking(LockRequest::exclusive(&path).operation("privacy regression"))\n        .expect("acquire lock");\n    let mode = fs::metadata(&root).expect("root metadata after acquire").permissions().mode() & 0o777;\n    assert_eq!(mode & 0o077, 0, "lock root remained group/other accessible: {mode:o}");\n    drop(guard);\n}\n''')
+          tests.write_text('''use std::fs;
+
+          use zed_lock::{LockManager, LockRequest};
+
+          #[cfg(unix)]
+          #[test]
+          fn lock_root_is_private_even_under_permissive_umask() {
+              use std::os::unix::fs::PermissionsExt;
+
+              let temp = tempfile::tempdir().expect("temp root");
+              let root = temp.path().join("locks");
+              fs::create_dir_all(&root).expect("seed root");
+              let mut permissions = fs::metadata(&root).expect("root metadata").permissions();
+              permissions.set_mode(0o755);
+              fs::set_permissions(&root, permissions).expect("widen seeded root");
+
+              let path = root.join("install.lock");
+              let guard = LockManager::global()
+                  .acquire_blocking(LockRequest::exclusive(&path).operation("privacy regression"))
+                  .expect("acquire lock");
+              let mode = fs::metadata(&root)
+                  .expect("root metadata after acquire")
+                  .permissions()
+                  .mode()
+                  & 0o777;
+              assert_eq!(
+                  mode & 0o077,
+                  0,
+                  "lock root remained group/other accessible: {mode:o}"
+              );
+              drop(guard);
+          }
+          ''')
           PY
           cargo fmt --all
           cargo test --locked --test private_lock_root -- --nocapture
