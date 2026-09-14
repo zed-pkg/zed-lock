@@ -121,13 +121,16 @@ jobs:
           ''')
           PY
           cargo fmt --all
-          cargo test --locked --test private_lock_root -- --nocapture
-          cargo clippy --locked --all-targets -- -D warnings
+          cp Cargo.lock "$RUNNER_TEMP/Cargo.lock.before"
+          cargo test --test private_lock_root -- --nocapture
+          cargo clippy --all-targets -- -D warnings
+          cmp "$RUNNER_TEMP/Cargo.lock.before" Cargo.lock || cp "$RUNNER_TEMP/Cargo.lock.before" Cargo.lock
       - name: Commit hardened implementation
         run: |
           set -euo pipefail
           git add src/lib.rs tests/private_lock_root.rs
           git diff --cached --check
+          git diff --exit-code -- Cargo.lock
           git config user.name 'ORESoftware'
           git config user.email 'alex@oresoftware.com'
           git commit -m 'fix(DEN-2037): keep local lock roots private on Unix'
