@@ -34,8 +34,9 @@ exclude = [
 dir = "."
 adapter = "rust"
 
+# Zed CLI v0.3.0, intentionally pinned by the dependency-gate workflow, only
+# accepts the canonical `test` lifecycle key on this manifest surface. Keep
+# fmt/clippy/package-contract coverage in native CI rather than declaring
+# lifecycle keys that this reviewed CLI cannot parse.
 [scripts]
 test = "cargo test --all-targets"
-lint = "cargo clippy --all-targets -- -D warnings"
-fmt = "cargo fmt --all --check"
-package-contract = "python3 scripts/check-package-contract.py"
