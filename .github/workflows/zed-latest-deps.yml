@@ -9,10 +9,20 @@ jobs:
     name: zed-latest-deps
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    env: {ZED_PKG_INTERACTIVE: "false", GITHUB_TOKEN: "${{ github.token }}"}
+    env:
+      ZED_PKG_INTERACTIVE: "false"
+      GITHUB_TOKEN: "${{ github.token }}"
+      EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with: {fetch-depth: 0, persist-credentials: false}
+      - name: Check out exact candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify exact candidate
+        shell: bash
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
       - name: Install pinned Zed CLI v0.3.0
         shell: bash
         run: |
