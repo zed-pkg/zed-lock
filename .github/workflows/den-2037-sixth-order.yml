@@ -1,0 +1,71 @@
+# Executable evidence for zed-lock issue #31; ownership remains native OS authority.
+# Exact-head push lane intentionally avoids PR approval gates after generated repairs.
+name: DEN-2037 sixth-order API-state conformance
+
+on:
+  push:
+    branches: [den-2037-sixth-order-api-events]
+    paths:
+      - 'src/**'
+      - 'tests/den_2037_sixth_order.rs'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/den-2037-sixth-order.yml'
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'tests/den_2037_sixth_order.rs'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/den-2037-sixth-order.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: den-2037-sixth-order-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  public-api-state-machine:
+    name: public API state machine / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15, windows-2025]
+    steps:
+      - name: Check out exact candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          show-progress: false
+      - name: Install pinned Rust toolchain components
+        run: |
+          rustup toolchain install 1.88.0 --profile minimal --component rustfmt,clippy
+          rustup default 1.88.0
+          rustc --version --verbose
+          cargo --version --verbose
+      - name: Check only the new suite formatting
+        run: rustfmt --edition 2024 --check tests/den_2037_sixth_order.rs
+      - name: Run all 15 sixth-order public API tasks
+        run: cargo test --locked --test den_2037_sixth_order -- --nocapture --test-threads=1
+      - name: Strict clippy for the sixth-order suite
+        run: cargo clippy --locked --test den_2037_sixth_order -- -D warnings
+
+  summary:
+    name: require all three native platforms
+    if: always()
+    needs: [public-api-state-machine]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Enforce executable evidence
+        env:
+          RESULT: ${{ needs.public-api-state-machine.result }}
+        run: |
+          set -euo pipefail
+          echo "public-api-state-machine=$RESULT"
+          test "$RESULT" = success
