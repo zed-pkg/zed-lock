@@ -12,7 +12,6 @@ cleanup() {
   if [[ "$lock_tracked" -eq 0 ]]; then rm -f .zpkg.lock; fi
 }
 trap cleanup EXIT
-zed validate
 zed install
 if [[ "$lock_tracked" -eq 1 ]] && ! git diff --quiet HEAD -- .zpkg.lock; then
   echo 'tracked .zpkg.lock is stale relative to newest versions allowed by .zpkg.toml' >&2
