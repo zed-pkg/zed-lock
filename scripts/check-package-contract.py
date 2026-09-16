@@ -42,7 +42,6 @@ def main() -> int:
 
     expected_scalar_fields = {
         "name": "zed-lock",
-        "version": "0.1.1",
         "license": "MIT",
     }
     for field, expected in expected_scalar_fields.items():
@@ -56,6 +55,18 @@ def main() -> int:
             errors.append(
                 f"Zed package.{field} must be {expected!r}, got {zpkg_value!r}"
             )
+
+    cargo_version = cargo_package.get("version")
+    zpkg_version = zpkg_package.get("version")
+    if not isinstance(cargo_version, str) or not cargo_version:
+        errors.append(
+            f"Cargo package.version must be a non-empty string, got {cargo_version!r}"
+        )
+    elif zpkg_version != cargo_version:
+        errors.append(
+            "Zed package.version must match Cargo package.version, "
+            f"got Cargo={cargo_version!r}, Zed={zpkg_version!r}"
+        )
 
     if cargo_package.get("rust-version") != "1.88":
         errors.append(
