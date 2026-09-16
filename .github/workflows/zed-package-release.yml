@@ -176,6 +176,21 @@ jobs:
           output="$(zed publish --dry-run 2>&1)"
           printf '%s\n' "$output" | grep -F "dry run: would publish zed-pkg/zed-lock@${VERSION} " | grep -F "sha256 ${EXPECTED_SHA256})" >/dev/null
 
+      - name: Restore pristine certified source after dry run
+        working-directory: package
+        shell: bash
+        run: |
+          set -euo pipefail
+          # A dry run may create publication scratch files, but it must never
+          # mutate tracked source. Fail closed before removing only untracked
+          # and ignored residue so the real publish uses the certified tree.
+          git diff --exit-code -- .
+          git diff --cached --exit-code -- .
+          git clean -ffdx
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+          test "$(git rev-parse HEAD)" = "$SOURCE_COMMIT"
+          test "$(git rev-list -n1 "$RELEASE_REF")" = "$SOURCE_COMMIT"
+
       - name: Publish canonical Zed package
         working-directory: package
         shell: bash
@@ -187,14 +202,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          asset="zpkg-zed-pkg-zed-lock-${VERSION}.tar.gz"
-          sidecar="zpkg-zed-pkg-zed-lock-${VERSION}.json"
+          asset="zpkg-${EXPECTED_SHA256}.tar.gz"
+          sidecar="zpkg-version.json"
           mkdir -p "$RUNNER_TEMP/release-verify"
           gh release download "$RELEASE_REF" --repo "$GITHUB_REPOSITORY" --pattern "$asset" --pattern "$sidecar" --dir "$RUNNER_TEMP/release-verify"
           test "$(sha256sum "$RUNNER_TEMP/release-verify/$asset" | awk '{print $1}')" = "$EXPECTED_SHA256"
-          test "$(jq -r '.sha256' "$RUNNER_TEMP/release-verify/$sidecar")" = "$EXPECTED_SHA256"
-          test "$(jq -r '.vcs_tag' "$RUNNER_TEMP/release-verify/$sidecar")" = "$RELEASE_REF"
-          test "$(jq -r '.vcs_commit' "$RUNNER_TEMP/release-verify/$sidecar")" = "$SOURCE_COMMIT"
+          test "$(jq -r '.schema' "$RUNNER_TEMP/release-verify/$sidecar")" = "zpkg.signed-version/v1"
+          test "$(jq -r '.payload.sha256' "$RUNNER_TEMP/release-verify/$sidecar")" = "$EXPECTED_SHA256"
+          test "$(jq -r '.payload.vcs_tag' "$RUNNER_TEMP/release-verify/$sidecar")" = "$RELEASE_REF"
+          test "$(jq -r '.payload.vcs_commit' "$RUNNER_TEMP/release-verify/$sidecar")" = "$SOURCE_COMMIT"
 
       - name: Outside-in registry-down fallback canary
         shell: bash
