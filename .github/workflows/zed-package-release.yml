@@ -1,0 +1,224 @@
+name: Immutable Zed package release
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/zed-package-release.yml
+      - .zpkg.toml
+      - Cargo.toml
+      - Cargo.lock
+      - CHANGELOG.md
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/zed-package-release.yml
+      - .zpkg.toml
+      - Cargo.toml
+      - Cargo.lock
+      - CHANGELOG.md
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zed-lock-package-release-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  RELEASE_REF: v0.1.2
+  VERSION: 0.1.2
+  ZED_CLI_COMMIT: eb5656e974105677982f533c6ae24f2c99abdf2e
+  ZED_PKG_INTERACTIVE: 'false'
+
+jobs:
+  certify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    outputs:
+      source_commit: ${{ steps.provenance.outputs.source_commit }}
+      sha256: ${{ steps.pack.outputs.sha256 }}
+    steps:
+      - name: Check out exact candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: package
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify synchronized release metadata
+        working-directory: package
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(awk -F '"' '/^version = / { print $2; exit }' .zpkg.toml)" = "$VERSION"
+          test "$(awk -F '"' '/^version = / { print $2; exit }' Cargo.toml)" = "$VERSION"
+          awk '
+            $0 == "name = \"zed-lock\"" { seen = 1; next }
+            seen && /^version = / { gsub(/.*\"|\".*/, ""); print; exit }
+          ' Cargo.lock | grep -Fx "$VERSION" >/dev/null
+          cargo fmt --check
+          cargo test --locked --all-targets
+          cargo clippy --locked --all-targets -- -D warnings
+
+      - name: Record exact source provenance
+        id: provenance
+        working-directory: package
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_commit="$(git rev-parse HEAD)"
+          echo "source_commit=$source_commit" >> "$GITHUB_OUTPUT"
+
+      - name: Check out exact fixed Zed CLI source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: zed-pkg/zed-cli
+          ref: ${{ env.ZED_CLI_COMMIT }}
+          path: zed-cli
+          persist-credentials: false
+
+      - name: Build pinned Zed CLI
+        working-directory: zed-cli
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$ZED_CLI_COMMIT"
+          cargo build --locked --bin zed
+          mkdir -p "$RUNNER_TEMP/zed-bin"
+          install -m 0755 target/debug/zed "$RUNNER_TEMP/zed-bin/zed"
+          echo "$RUNNER_TEMP/zed-bin" >> "$GITHUB_PATH"
+
+      - name: Prove canonical package bytes
+        id: pack
+        working-directory: package
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Pull requests certify the future immutable tag without writing it.
+          # Pushes to main create the same local tag before publication.
+          if ! git rev-parse "$RELEASE_REF" >/dev/null 2>&1; then
+            git tag "$RELEASE_REF" "$(git rev-parse HEAD)"
+          fi
+          output="$(zed publish --dry-run 2>&1)"
+          printf '%s\n' "$output"
+          canonical_line="$(printf '%s\n' "$output" | grep -F "dry run: would publish zed-pkg/zed-lock@${VERSION} " | head -n1)"
+          test -n "$canonical_line"
+          sha256="$(printf '%s\n' "$canonical_line" | sed -n 's/.*sha256 \([0-9a-f]\{64\}\)).*/\1/p')"
+          test "${#sha256}" -eq 64
+          echo "sha256=$sha256" >> "$GITHUB_OUTPUT"
+
+  publish:
+    needs: certify
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    permissions:
+      contents: write
+      packages: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GITHUB_TOKEN: ${{ github.token }}
+      ZED_PKG_GITHUB_TOKEN: ${{ github.token }}
+      ZED_PKG_TOKEN: ${{ secrets.ZED_PKG_TOKEN }}
+      EXPECTED_SHA256: ${{ needs.certify.outputs.sha256 }}
+      SOURCE_COMMIT: ${{ needs.certify.outputs.source_commit }}
+    steps:
+      - name: Check out exact certified source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ env.SOURCE_COMMIT }}
+          path: package
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Check out exact fixed Zed CLI source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: zed-pkg/zed-cli
+          ref: ${{ env.ZED_CLI_COMMIT }}
+          path: zed-cli
+          persist-credentials: false
+
+      - name: Build pinned Zed CLI
+        working-directory: zed-cli
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$ZED_CLI_COMMIT"
+          cargo build --locked --bin zed
+          mkdir -p "$RUNNER_TEMP/zed-bin"
+          install -m 0755 target/debug/zed "$RUNNER_TEMP/zed-bin/zed"
+          echo "$RUNNER_TEMP/zed-bin" >> "$GITHUB_PATH"
+
+      - name: Create immutable patch tag if absent
+        working-directory: package
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_COMMIT"
+          git fetch --tags --force
+          if git rev-parse "$RELEASE_REF" >/dev/null 2>&1; then
+            test "$(git rev-list -n1 "$RELEASE_REF")" = "$SOURCE_COMMIT"
+          else
+            git tag "$RELEASE_REF" "$SOURCE_COMMIT"
+            git push origin "refs/tags/$RELEASE_REF"
+          fi
+
+      - name: Re-prove exact package bytes
+        working-directory: package
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$(zed publish --dry-run 2>&1)"
+          printf '%s\n' "$output" | grep -F "dry run: would publish zed-pkg/zed-lock@${VERSION} " | grep -F "sha256 ${EXPECTED_SHA256})" >/dev/null
+
+      - name: Publish canonical Zed package
+        working-directory: package
+        shell: bash
+        run: |
+          set -euo pipefail
+          zed publish
+
+      - name: Verify GitHub Release fallback assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          asset="zpkg-zed-pkg-zed-lock-${VERSION}.tar.gz"
+          sidecar="zpkg-zed-pkg-zed-lock-${VERSION}.json"
+          mkdir -p "$RUNNER_TEMP/release-verify"
+          gh release download "$RELEASE_REF" --repo "$GITHUB_REPOSITORY" --pattern "$asset" --pattern "$sidecar" --dir "$RUNNER_TEMP/release-verify"
+          test "$(sha256sum "$RUNNER_TEMP/release-verify/$asset" | awk '{print $1}')" = "$EXPECTED_SHA256"
+          test "$(jq -r '.sha256' "$RUNNER_TEMP/release-verify/$sidecar")" = "$EXPECTED_SHA256"
+          test "$(jq -r '.vcs_tag' "$RUNNER_TEMP/release-verify/$sidecar")" = "$RELEASE_REF"
+          test "$(jq -r '.vcs_commit' "$RUNNER_TEMP/release-verify/$sidecar")" = "$SOURCE_COMMIT"
+
+      - name: Outside-in registry-down fallback canary
+        shell: bash
+        env:
+          ZED_PKG_REGISTRY: http://127.0.0.1:9
+          ZED_PKG_SOURCE_FALLBACK_ALLOW_LOOPBACK: 'true'
+          ZED_PKG_SOURCE_FALLBACK: 'true'
+          ZED_PKG_TOKEN: ''
+        run: |
+          set -euo pipefail
+          canary="$RUNNER_TEMP/zed-lock-release-canary"
+          mkdir -p "$canary"
+          cat > "$canary/.zpkg.toml" <<EOF
+          [package]
+          org = "zed-lock-release-canary"
+          name = "consumer"
+          version = "0.0.0"
+          license = "MIT"
+
+          [package.repository]
+          vcs = "git"
+          url = "https://github.com/zed-pkg/zed-lock"
+
+          [dependencies]
+          "zed-pkg/zed-lock" = "=${VERSION}"
+          EOF
+          cd "$canary"
+          zed install
+          test -s .zpkg.lock
+          grep -F "$EXPECTED_SHA256" .zpkg.lock >/dev/null
