@@ -2,36 +2,16 @@
 
 ## Unreleased
 
-- Harden `open_lock_file()` behind an explicit `PathSecurityPolicy`.
-  Private/fail-closed is the default: Unix creates `0700` directories and
-  `0600` files, opens the final component with `O_NOFOLLOW`, and rejects
-  foreign ownership, symlink parents, and group/other-writable rendezvous
-  paths. Existing overly-permissive lock files are rejected rather than
-  chmod'd. Windows refuses reparse points and junctions, keeps handles
-  non-inheritable via `SetHandleInformation` (MSRV 1.88 has no
-  `OpenOptionsExt::inherit_handle`), and applies a user-private DACL. Windows
-  FFI uses edition-2024 `unsafe extern` blocks. Shared-directory mode is
-  opt-in and still refuses substitution. Policy helpers are unit-tested on
-  every OS; native reparse/DACL APIs are `cfg(windows)` and exercised on
-  Windows CI.
-- Add a bounded Quint/TLC model, schema-v1 `fmctl` manifest, JSON Schema
-  refinement corpus, production Rust replay, and pinned formal-methods CI for
-  waiter cancellation, timeout, detached native grants, ownership transfer,
-  waiter caps, same-process rejection, and ordered lock-set unwind.
-- Emit one terminal reason for `acquire_timeout`: `TimedOut` is no longer
-  followed by the generic `Cancelled` callback when the waiter is dropped.
-- Explicitly unwind a partially acquired lock set in reverse order before
-  returning the later acquisition error.
-- Classify Windows `LockFileEx` error 33 (`ERROR_LOCK_VIOLATION`) as
-  ordinary nonblocking contention, returning `Ok(None)` from
-  `LockManager::try_acquire` instead of a hard I/O error. This matches the
-  existing cross-platform meaning of a failed nonblocking acquisition: another
-  descriptor remains authoritative and the caller may retry or wait.
-- Retain `WouldBlock` behavior on every platform and continue to surface
-  unrelated I/O failures.
-- Cover the Windows native error directly in unit tests while retaining the
-  complete cross-process descriptor-release and protected-counter conformance
-  suite on Windows Server 2025.
+## 0.1.2 — 2026-09-15
+
+Release the hardened current locking implementation as a valid Zed source package.
+
+- Keep the whole-repository Rust target free of a target-level native registry route; crates.io remains an independent native release surface.
+- Carry the fail-closed path-security hardening for Unix and Windows lock files and rendezvous directories.
+- Carry the bounded formal-model/replay coverage for waiter cancellation, timeout, ownership transfer, waiter caps, and ordered lock-set unwind.
+- Preserve the single-terminal-reason timeout behavior and reverse-order cleanup of partial lock sets.
+- Preserve Windows nonblocking contention parity for `ERROR_LOCK_VIOLATION`.
+- Publish this patch version so `^0.1.1` Zed consumers can resolve a modern, valid package without rewriting the immutable `v0.1.1` tag.
 
 ## 0.1.1 — 2026-08-05
 
