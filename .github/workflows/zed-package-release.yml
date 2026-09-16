@@ -39,9 +39,32 @@ jobs:
       source_commit: ${{ steps.provenance.outputs.source_commit }}
       sha256: ${{ steps.pack.outputs.sha256 }}
     steps:
-      - name: Check out exact candidate
+      - name: Resolve exact package source ref
+        id: source
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            test -n "$PR_HEAD_SHA"
+            source_ref="$PR_HEAD_SHA"
+          elif git ls-remote --exit-code "https://github.com/${GITHUB_REPOSITORY}.git" "refs/tags/$RELEASE_REF" >/dev/null 2>&1; then
+            # Recovery runs must reuse an already-created immutable tag rather
+            # than reinterpret a later workflow-only main commit as the release.
+            source_ref="$RELEASE_REF"
+          else
+            # First publication of a new hard-coded patch release starts from
+            # the exact triggering main commit; publish will create the tag.
+            source_ref="$GITHUB_SHA"
+          fi
+          echo "source_ref=$source_ref" >> "$GITHUB_OUTPUT"
+
+      - name: Check out exact package source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
+          ref: ${{ steps.source.outputs.source_ref }}
           path: package
           fetch-depth: 0
           persist-credentials: false
@@ -96,12 +119,20 @@ jobs:
         id: pack
         working-directory: package
         shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
         run: |
           set -euo pipefail
-          # Pull requests certify the future immutable tag without writing it.
-          # Pushes to main create the same local tag before publication.
-          if ! git rev-parse "$RELEASE_REF" >/dev/null 2>&1; then
-            git tag "$RELEASE_REF" "$(git rev-parse HEAD)"
+          source_commit="$(git rev-parse HEAD)"
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            # PR certification never mutates the remote immutable tag. Move a
+            # local-only tag to the candidate so publish's provenance rule is
+            # exercised against the proposed workflow/source state.
+            git tag -f "$RELEASE_REF" "$source_commit"
+          elif git rev-parse "$RELEASE_REF" >/dev/null 2>&1; then
+            test "$(git rev-list -n1 "$RELEASE_REF")" = "$source_commit"
+          else
+            git tag "$RELEASE_REF" "$source_commit"
           fi
           output="$(zed publish --dry-run 2>&1)"
           printf '%s\n' "$output"
