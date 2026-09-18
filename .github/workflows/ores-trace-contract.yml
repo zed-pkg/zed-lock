@@ -1,0 +1,16 @@
+name: ORES trace marker contract
+on: [pull_request]
+jobs:
+  ores-trace-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: 22}
+      - shell: bash
+        run: |
+          node <<'NODE'
+          const fs=require('fs'),cp=require('child_process'),p=require('path'),ext=new Set(['.js','.jsx','.ts','.tsx','.mjs','.cjs']),bad=[];
+          for(const f of cp.execFileSync('git',['ls-files'],{encoding:'utf8'}).trim().split(/\r?\n/).filter(f=>f&&ext.has(p.extname(f))&&!/(^|\/)(node_modules|dist|build|coverage|vendor|generated)(\/|$)/.test(f))){fs.readFileSync(f,'utf8').split(/\r?\n/).forEach((l,i)=>{if(l.includes('dd-trace-'))bad.push(`${f}:${i+1}: use ores-trace-*`);const m=l.match(/\.(addTrace(?:Id)?)\(\s*(['"`])([^'"`]+)\2/);if(m&&!/^ores-trace-[A-Za-z0-9_-]{12,64}$/.test(m[3]))bad.push(`${f}:${i+1}: ${m[1]} literal must use ores-trace-*`);if(/\b(?:const|let|var)\s+\w*trace\w*\s*=\s*(['"`])ores-trace-[^'"`]+\1/i.test(l))bad.push(`${f}:${i+1}: keep static ores-trace-* inline`);const r=l.match(/\bconst\s+routineId\s*=\s*(['"`])([^'"`]+)\1/);if(r&&!/^ores-routine-[A-Za-z0-9_-]{12,64}$/.test(r[2]))bad.push(`${f}:${i+1}: routineId must use ores-routine-*`);});}
+          if(bad.length){console.error(bad.join('\n'));process.exit(1)}
+          NODE
